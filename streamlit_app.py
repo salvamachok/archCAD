@@ -1,159 +1,441 @@
 import json
-from functools import partial
+from datetime import date
 
 import streamlit as st
 
-from engine import build_project, project_document, score_project
-from modules import (
-    adjacency,
-    compliance,
-    dashboard,
-    design_basics,
-    design_reference,
-    drawings,
-    metric_handbook,
-    project_brief,
-    site_context,
-    space_planner,
-    space_program,
-    viewers,
-    workflow,
+st.set_page_config(
+    page_title="archCAD | Architectural Studio",
+    page_icon="A",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-st.set_page_config(page_title="Designer | Architectural Design Studio", page_icon="D", layout="wide", initial_sidebar_state="expanded")
+# -------------------- DESIGN --------------------
 
 st.markdown("""
 <style>
-.designer-brand{font-size:2.15rem;font-weight:760;letter-spacing:-.045em;margin-bottom:0}
-.designer-subtitle{color:#6b6b6b;margin-top:-.25rem;margin-bottom:1rem}
-.status-card{border:1px solid rgba(49,51,63,.14);border-radius:12px;padding:.8rem 1rem;background:rgba(250,250,250,.55);min-height:72px}
-.status-card .label{font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:#777}
-.status-card .value{font-size:1rem;font-weight:650;margin-top:.15rem}
-div[data-testid="stMetric"]{border:1px solid rgba(49,51,63,.12);border-radius:10px;padding:.6rem .8rem}
-div[data-testid="stSidebar"] .stButton button{border-radius:8px}
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');
+
+html, body, [class*="css"] {
+    font-family: 'DM Sans', sans-serif;
+}
+.stApp {
+    background: #f5f6f8;
+}
+section[data-testid="stSidebar"] {
+    background: #171a21;
+}
+section[data-testid="stSidebar"] * {
+    color: #f5f6f8 !important;
+}
+.brand {
+    font-size: 34px;
+    font-weight: 800;
+    letter-spacing: -1.5px;
+    color: #18212f;
+}
+.subtitle {
+    color: #7b8492;
+    margin-bottom: 25px;
+}
+.metric-card {
+    background: white;
+    padding: 20px;
+    border-radius: 13px;
+    border: 1px solid #e5e8ed;
+}
+.metric-label {
+    color: #818a98;
+    font-size: 12px;
+    text-transform: uppercase;
+}
+.metric-value {
+    color: #172333;
+    font-size: 25px;
+    font-weight: 800;
+    margin-top: 5px;
+}
+.section-card {
+    background: white;
+    border: 1px solid #e5e8ed;
+    padding: 20px;
+    border-radius: 13px;
+    margin-bottom: 15px;
+}
+h1, h2, h3 {
+    color: #172333;
+}
+.stButton button {
+    border-radius: 8px;
+    font-weight: 600;
+}
 </style>
 """, unsafe_allow_html=True)
 
-
-def reference(section, topic):
-    return partial(design_reference.render, section=section, topic=topic)
-
-
-def basics(topic):
-    return partial(design_basics.render, category=topic)
-
-BUILDING_TYPES=["Housing","Offices","Schools","Universities","Hospitals","Hotels","Retail","Restaurants","Libraries","Industrial","Sports","Religious","Civic","Transport"]
-ENVIRONMENT=["Daylight","Lighting","Ventilation","Thermal","Acoustics","Tropical Design"]
-SAFETY=["Fire","Egress","Accessibility","Security","Flood"]
-
-NAVIGATION={
-    "Project":{"Dashboard":dashboard,"Workflow":workflow,"Project Brief":project_brief,"Site & Context":site_context},
-    "Design Basics":{name:basics(name) for name in ["Human Dimensions","Space Requirements","Movement","Accessibility","Dimensional Coordination"]},
-    "Building Types":{name:reference("Building Types",name) for name in BUILDING_TYPES},
-    "Environment":{name:reference("Environment",name) for name in ENVIRONMENT},
-    "Safety":{name:reference("Safety",name) for name in SAFETY},
-    "Design Engine":{
-        "Space Program":space_program,"Adjacency":adjacency,"Planning":space_planner,"Dimensions":viewers,
-        "Compliance":compliance,"Building Model":viewers,"Floor Plans":drawings,"Sections":drawings,
-        "Elevations":drawings,"Reports":viewers,"Metric Standards":metric_handbook,"Viewers":viewers,
-    },
-}
-STAGES=list(NAVIGATION)
-FLAT_TABS=[tab for tabs in NAVIGATION.values() for tab in tabs]
-metric_rows=st.session_state.get("metric_handbook_standards",[])
+# -------------------- SESSION DATA --------------------
 
 if "project" not in st.session_state:
-    st.session_state.project=build_project("My Architectural Project","Residential",1000.0,1,"Medium",session_rows=metric_rows)
-if "active_tab" not in st.session_state or st.session_state.active_tab not in FLAT_TABS:
-    st.session_state.active_tab="Dashboard"
-if "program_scale" not in st.session_state:
-    st.session_state.program_scale="Medium"
+    st.session_state.project = {
+        "name": "My Architectural Project",
+        "type": "Residential",
+        "location": "",
+        "site_area": 1000.0,
+        "floors": 1,
+        "climate": "Tropical",
+        "client": "",
+        "description": "",
+        "spaces": [
+            {"name": "Living Room", "area": 30.0, "quantity": 1},
+            {"name": "Kitchen", "area": 15.0, "quantity": 1},
+            {"name": "Bedroom", "area": 16.0, "quantity": 3},
+            {"name": "Bathroom", "area": 6.0, "quantity": 2},
+            {"name": "Dining Room", "area": 18.0, "quantity": 1}
+        ]
+    }
 
-project=st.session_state.project
-active_tab=st.session_state.active_tab
-active_section=next(section for section,tabs in NAVIGATION.items() if active_tab in tabs)
-try:
-    scores=score_project(project,session_rows=metric_rows)
-except TypeError as exc:
-    if "session_rows" not in str(exc): raise
-    scores=score_project(project)
+p = st.session_state.project
+
+# -------------------- HELPERS --------------------
+
+def total_area():
+    return sum(
+        s["area"] * s["quantity"]
+        for s in p["spaces"]
+    )
+
+def project_score():
+    score = 100
+    if not p["name"].strip():
+        score -= 15
+    if not p["location"].strip():
+        score -= 10
+    if p["site_area"] <= 0:
+        score -= 25
+    if not p["spaces"]:
+        score -= 30
+    if total_area() > p["site_area"] * p["floors"]:
+        score -= 20
+    return max(0, score)
+
+def export_data():
+    return json.dumps(p, indent=4)
+
+# -------------------- SIDEBAR --------------------
 
 with st.sidebar:
-    st.markdown("# Designer")
-    st.caption("Architectural Design Studio")
+    st.markdown("# archCAD")
+    st.caption("ARCHITECTURAL DESIGN STUDIO")
     st.divider()
-    st.subheader("Design Stage")
-    selected_section=st.selectbox("Stage",STAGES,index=STAGES.index(active_section),label_visibility="collapsed")
-    if selected_section!=active_section:
-        st.session_state.active_tab=next(iter(NAVIGATION[selected_section]))
-        st.rerun()
-    tabs=list(NAVIGATION[active_section])
-    selected_tab=st.selectbox("Workspace",tabs,index=tabs.index(active_tab),label_visibility="collapsed")
-    if selected_tab!=active_tab:
-        st.session_state.active_tab=selected_tab
-        st.rerun()
-    st.divider()
-    st.subheader("Project Controls")
-    scale=st.selectbox("Program scale",["Small","Medium","Large"],key="program_scale")
-    if st.button("Generate / Reset Program",type="primary",use_container_width=True):
-        old=st.session_state.project
-        st.session_state.project=build_project(old.name,old.typology,old.site_area,old.floors,scale,session_rows=metric_rows)
-        st.session_state.project.location=old.location
-        st.session_state.project.climate=old.climate
-        st.session_state.project.metadata.update(old.metadata)
-        for key in ["selected_planning_layout","selected_planning_alternative","selected_planning_columns"]:
-            st.session_state.pop(key,None)
-        st.rerun()
-    if st.button("Open Dashboard",use_container_width=True):
-        st.session_state.active_tab="Dashboard"
-        st.rerun()
-    st.divider()
-    st.subheader("Project Status")
-    st.caption(project.name)
-    st.caption(f"{project.typology} | {project.floors} floor(s) | {project.site_area:,.0f} m² site")
-    if metric_rows: st.success(f"Metric dataset: {len(metric_rows)} records")
-    else: st.info("Illustrative baseline Metric values")
-    st.caption(f"Schema: {project.schema_version}")
 
-st.markdown('<div class="designer-brand">Designer</div>',unsafe_allow_html=True)
-st.markdown('<div class="designer-subtitle">Parametric architectural planning studio</div>',unsafe_allow_html=True)
-metric_cols=st.columns(5)
-metric_cols[0].metric("Overall",f"{scores.get('Overall',0):.1f}%")
-metric_cols[1].metric("Metric compliance",f"{scores.get('Metric compliance',0):.1f}%")
-metric_cols[2].metric("Programmed area",f"{project.programmed_area:,.1f} m²")
-metric_cols[3].metric("Site",f"{project.site_area:,.0f} m²")
-metric_cols[4].metric("Floors",str(project.floors))
-stage_position=STAGES.index(active_section)+1
-st.progress(stage_position/len(STAGES),text=f"Design workflow: {active_section} | Stage {stage_position} of {len(STAGES)}")
-context_cols=st.columns(4)
-for col,(label,value) in zip(context_cols,[("Project",project.name),("Location",project.location or "Not defined"),("Climate",project.climate or "Not defined"),("Workspace",active_tab)]):
-    col.markdown(f'<div class="status-card"><div class="label">{label}</div><div class="value">{value}</div></div>',unsafe_allow_html=True)
-st.divider()
+    page = st.radio(
+        "WORKSPACE",
+        [
+            "Dashboard",
+            "Project Brief",
+            "Space Programme",
+            "Site Planning",
+            "Design Review",
+            "Project Report"
+        ]
+    )
 
-if active_tab=="Dashboard":
-    dashboard.render(project,scores)
-elif active_tab=="Workflow":
-    workflow.render(project,active_section,active_tab,NAVIGATION)
-else:
-    current_module=NAVIGATION[active_section][active_tab]
-    try:
-        if callable(current_module) and not hasattr(current_module,"render"):
-            current_module(project)
+    st.divider()
+    st.caption("PROJECT")
+    st.write(p["name"])
+    st.caption(f'{p["type"]} | {p["floors"]} floor(s)')
+
+    st.divider()
+    st.caption("archCAD Conceptual Planning Environment")
+
+# -------------------- HEADER --------------------
+
+st.markdown('<div class="brand">archCAD</div>', unsafe_allow_html=True)
+st.markdown(
+    '<div class="subtitle">Architectural planning and design workspace</div>',
+    unsafe_allow_html=True
+)
+
+# -------------------- DASHBOARD --------------------
+
+if page == "Dashboard":
+
+    st.title("Project Dashboard")
+    st.write("Overview of your architectural project.")
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    metrics = [
+        ("SITE AREA", f'{p["site_area"]:,.0f} m²'),
+        ("PROGRAMMED AREA", f'{total_area():,.1f} m²'),
+        ("FLOORS", str(p["floors"])),
+        ("DESIGN SCORE", f'{project_score()}%')
+    ]
+
+    for col, (label, value) in zip([c1,c2,c3,c4], metrics):
+        with col:
+            st.markdown(
+                f"""
+                <div class="metric-card">
+                    <div class="metric-label">{label}</div>
+                    <div class="metric-value">{value}</div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+    st.divider()
+
+    left, right = st.columns([1.4, 1])
+
+    with left:
+        st.subheader("Project Information")
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        st.write("**Project:**", p["name"])
+        st.write("**Building type:**", p["type"])
+        st.write("**Location:**", p["location"] or "Not specified")
+        st.write("**Client:**", p["client"] or "Not specified")
+        st.write("**Climate:**", p["climate"])
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with right:
+        st.subheader("Design Progress")
+        st.progress(project_score() / 100)
+        st.write(f"Current score: {project_score()}%")
+        st.caption("Preliminary completeness indicator, not regulatory certification.")
+
+        if total_area() > p["site_area"] * p["floors"]:
+            st.warning("Programmed area exceeds the available site-area allowance.")
+
+    st.subheader("Space Programme")
+    if p["spaces"]:
+        st.dataframe(p["spaces"], use_container_width=True)
+    else:
+        st.info("No spaces have been added yet.")
+
+# -------------------- PROJECT BRIEF --------------------
+
+elif page == "Project Brief":
+
+    st.title("Project Brief")
+    st.write("Define the basic requirements of your building.")
+
+    with st.form("project_form"):
+        name = st.text_input("Project name", p["name"])
+        building_type = st.selectbox(
+            "Building type",
+            [
+                "Residential", "Commercial", "Office",
+                "Educational", "Healthcare", "Industrial",
+                "Hospitality", "Mixed Use", "Institutional"
+            ],
+            index=[
+                "Residential", "Commercial", "Office",
+                "Educational", "Healthcare", "Industrial",
+                "Hospitality", "Mixed Use", "Institutional"
+            ].index(p["type"])
+            if p["type"] in [
+                "Residential", "Commercial", "Office",
+                "Educational", "Healthcare", "Industrial",
+                "Hospitality", "Mixed Use", "Institutional"
+            ] else 0
+        )
+
+        client = st.text_input("Client", p["client"])
+        location = st.text_input("Project location", p["location"])
+        site_area = st.number_input(
+            "Site area (m²)", min_value=1.0,
+            value=float(p["site_area"])
+        )
+        floors = st.number_input(
+            "Number of floors", min_value=1,
+            max_value=100, value=int(p["floors"])
+        )
+        climate = st.selectbox(
+            "Climate",
+            ["Tropical", "Temperate", "Arid", "Cold", "Mediterranean"],
+            index=["Tropical", "Temperate", "Arid", "Cold", "Mediterranean"].index(p["climate"])
+        )
+        description = st.text_area(
+            "Project description", p["description"]
+        )
+
+        submitted = st.form_submit_button(
+            "Save Project Brief",
+            type="primary",
+            use_container_width=True
+        )
+
+        if submitted:
+            p.update({
+                "name": name,
+                "type": building_type,
+                "client": client,
+                "location": location,
+                "site_area": site_area,
+                "floors": floors,
+                "climate": climate,
+                "description": description
+            })
+            st.success("Project brief saved.")
+            st.rerun()
+
+# -------------------- SPACE PROGRAMME --------------------
+
+elif page == "Space Programme":
+
+    st.title("Space Programme")
+    st.write("Create and manage building spaces.")
+
+    with st.form("space_form"):
+        name = st.text_input("Space name")
+        area = st.number_input(
+            "Area per space (m²)",
+            min_value=0.1,
+            value=15.0
+        )
+        quantity = st.number_input(
+            "Quantity",
+            min_value=1,
+            value=1
+        )
+
+        add = st.form_submit_button(
+            "Add Space",
+            type="primary"
+        )
+
+        if add:
+            if name.strip():
+                p["spaces"].append({
+                    "name": name.strip(),
+                    "area": float(area),
+                    "quantity": int(quantity)
+                })
+                st.success("Space added.")
+                st.rerun()
+            else:
+                st.error("Enter a space name.")
+
+    st.divider()
+    st.subheader("Current Spaces")
+
+    if p["spaces"]:
+        for i, space in enumerate(p["spaces"]):
+            c1, c2, c3, c4 = st.columns([3, 1, 1, 1])
+            c1.write(space["name"])
+            c2.write(f'{space["area"]} m²')
+            c3.write(f'× {space["quantity"]}')
+            if c4.button("Remove", key=f"remove_{i}"):
+                p["spaces"].pop(i)
+                st.rerun()
+
+    st.divider()
+    st.metric("Total programmed area", f"{total_area():,.1f} m²")
+
+# -------------------- SITE PLANNING --------------------
+
+elif page == "Site Planning":
+
+    st.title("Site Planning")
+    st.write("Review preliminary site and building area relationships.")
+
+    coverage = total_area() / p["site_area"] * 100
+    floor_area_ratio = total_area() / p["site_area"]
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Site area", f'{p["site_area"]:,.1f} m²')
+    c2.metric("Programmed area", f'{total_area():,.1f} m²')
+    c3.metric("Area / site ratio", f"{floor_area_ratio:.2f}")
+
+    st.subheader("Preliminary Area Assessment")
+    st.write(f"Programmed area divided by site area: {coverage:.1f}%")
+
+    st.progress(min(coverage / 100, 1.0))
+
+    if coverage > 100:
+        st.warning("Programmed area exceeds the site area. Check building layout and floor distribution.")
+    else:
+        st.success("Programmed area is within the total site-area figure.")
+
+    st.info(
+        "These are preliminary arithmetic checks. Actual site coverage, "
+        "setbacks, floor-area ratio, parking and building height must be "
+        "checked against local planning regulations."
+    )
+
+# -------------------- DESIGN REVIEW --------------------
+
+elif page == "Design Review":
+
+    st.title("Design Review")
+    st.write("Preliminary project completeness and area checks.")
+
+    score = project_score()
+    st.metric("Project completeness score", f"{score}%")
+    st.progress(score / 100)
+
+    checks = {
+        "Project name defined": bool(p["name"].strip()),
+        "Building type selected": bool(p["type"]),
+        "Project location defined": bool(p["location"].strip()),
+        "Site area provided": p["site_area"] > 0,
+        "At least one space programmed": len(p["spaces"]) > 0,
+        "Programmed area within site-area figure": total_area() <= p["site_area"] * p["floors"]
+    }
+
+    for label, passed in checks.items():
+        if passed:
+            st.success(label)
         else:
-            current_module.render(project)
-    except Exception as exc:
-        st.error(f"Unable to render the {active_tab} workspace.")
-        with st.expander("Technical details"): st.exception(exc)
+            st.warning(label)
+
+    st.caption(
+        "This score measures basic data completeness only. It is not "
+        "a structural, architectural, safety or code-compliance approval."
+    )
+
+# -------------------- REPORT --------------------
+
+elif page == "Project Report":
+
+    st.title("Project Report")
+
+    st.subheader(p["name"])
+    st.write(f"**Date:** {date.today().isoformat()}")
+    st.write(f'**Building type:** {p["type"]}')
+    st.write(f'**Location:** {p["location"] or "Not specified"}')
+    st.write(f'**Site area:** {p["site_area"]:,.1f} m²')
+    st.write(f'**Floors:** {p["floors"]}')
+    st.write(f'**Climate:** {p["climate"]}')
+    st.write(f'**Programmed area:** {total_area():,.1f} m²')
+
+    st.subheader("Space Schedule")
+    if p["spaces"]:
+        st.dataframe(p["spaces"], use_container_width=True)
+
+    st.subheader("Project Description")
+    st.write(p["description"] or "No description provided.")
+
+    st.download_button(
+        "Download Project JSON",
+        data=export_data(),
+        file_name="archcad_project.json",
+        mime="application/json",
+        use_container_width=True
+    )
+
+    st.download_button(
+        "Download Space Schedule CSV",
+        data=__import__("pandas").DataFrame(p["spaces"]).to_csv(index=False),
+        file_name="archcad_space_schedule.csv",
+        mime="text/csv",
+        use_container_width=True
+    )
+
+# -------------------- FOOTER --------------------
 
 st.divider()
-with st.expander("Project data and export"):
-    document=project_document(project,layout=st.session_state.get("selected_planning_layout"))
-    c1,c2=st.columns([2,1])
-    with c1:
-        st.caption("Versioned project document")
-        st.json(document)
-    with c2:
-        st.download_button("Export project JSON",data=json.dumps(document,indent=2),file_name="designer_project_v2.json",mime="application/json",use_container_width=True)
-        st.caption("Current project state and selected planning layout.")
-
-st.caption("Designer | Conceptual architectural planning environment | Verify professional requirements before construction use.")
+st.caption(
+    "archCAD | Architectural Design Studio | "
+    "Conceptual planning tool. Verify all professional and statutory requirements."
+)
